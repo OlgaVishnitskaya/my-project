@@ -1,0 +1,141 @@
+# Временная директория и выходные пути
+PDF_FILES_DIR = "/tmp/pdf_graphs"
+os.makedirs(PDF_FILES_DIR, exist_ok=True)
+
+# -------------------------------
+# 1. save_gv_files — генерация .gv файлов (без изменений)
+# -------------------------------
+def save_gv_files(**kwargs):
+    ti = kwargs['ti']
+
+    # Пример данных — замените на реальные
+    tables_data = [
+        {
+            'url_address': '/script1.sql',
+            'final_table': 'tableA',
+            'child_table': 'tableA',
+            'parent_tables': ['tableB', 'tableC']
+        },
+        {
+            'url_address': '/script1.sql',
+            'final_table': 'tableA',
+            'child_table': 'tableA',
+            'parent_tables': ['tableD']
+        },
+        {
+            'url_address': '/script2.sql',
+            'final_table': 'tableX',
+            'child_table': 'tableX',
+            'parent_tables': ['tableY']
+        }
+    ]
+
+    grouped_data = defaultdict(list)
+    for data in tables_data:
+        key = (data['url_address'], data['final_table'])
+        grouped_data[key].append(data)
+
+    tmpdir = tempfile.mkdtemp(prefix="graph_")
+    output_dir = os.path.join(tmpdir, "graphs")
+    os.makedirs(output_dir, exist_ok=True)
+
+    gv_paths = []
+
+    for (url_address, final_table), group in grouped_data.items():
+        dot = Digraph(comment=f"Dependencies for {final_table}")
+        dot.graph_attr['label'] = f"Build Script: {url_address}"
+        dot.graph_attr['labelloc'] = 't'
+        dot.graph_attr['fontsize'] = '16'
+
+        for item in group:
+            child = item['child_table']
+            for parent in item['parent_tables']:
+                dot.edge(parent, child, href=url_address, tooltip="View build script")
+
+        gv_path = os.path.join(output_dir, f"dep_{final_table}.gv")
+        dot.save(gv_path)
+        gv_paths.append(gv_path)
+
+    ti.xcom_push(key='tmpdir', value=tmpdir)
+    ti.xcom_push(key='output_dir', value=output_dir)
+    ti.xcom_push(key='gv_paths', value=gv_paths)
+    ti.xcom_push(key='grouped_data_keys', value=list(grouped_data.keys()))  # для итерации
+
+    print(f"✅ Сохранено {len(gv_paths)} .gv файлов")
+
+
+# -------------------------------
+# 2. generate_individual_pdfs — создаёт отдельный PDF для каждого графа
+# -------------------------------
+def generate_individual_pdfs(**kwargs):
+    ti = kwargs['ti']
+    output_dir = ti.xcom_pull(task_ids='save_gv_files', key='output_dir')
+    keys = ti.xcom_pull(task_ids='save_gv_files', key='grouped_data_keys')
+
+    pdf_paths = []
+
+    for (url_address, final_table) in keys:
+        # Собираем зависимости только для этого графа
+        edges = set()
+        nodes = set()
+
+        # Здесь вы можете повторно использовать данные или читать .gv
+        # Для примера — фильтруем вручную
+        if final_table == 'tableA':
+            parents = ['tableB', 'tableC', 'tableD']
+            child = 'tableA'
+            for p in parents:
+                edges.add((p, child))
+            nodes.update(parents + [child])
+        elif final_table == 'tableX':
+            edges.add(('tableY', 'tableX'))
+            nodes.update(['tableY', 'tableX'])
+
+        # Строим граф
+        G = nx.DiGraph()
+        G.add_edges_from(edges)
+        G.add_nodes_from(nodes)
+
+        # Визуализация
+        plt.figure(figsize=(10, 7))
+        pos = nx.spring_layout(G, k=0.8, iterations=50, seed=42)
+
+        # Цвета
+        node_colors = []
+        color_map = {
+            'tableA': '#ccffcc',
+            'tableB': '#ccccff',
+            'tableC': '#ffcccc',
+            'tableD': '#ffffcc',
+            'tableX': '#ccffff',
+            'tableY': '#ffccff',
+        }
+        for node in G.nodes():
+            node_colors.append(color_map.get(node, '#e0e0e0'))
+
+        nx.draw(
+            G, pos,
+            with_labels=True,
+            node_size=2500,
+            node_color=node_colors,
+            font_size=11,
+            font_weight='bold',
+            edge_color='gray',
+            width=1.5,
+            arrows=True,
+            arrowsize=20,
+            alpha=0.9
+        )
+        plt.title(f"Зависимости: {final_table}\nСкрипт: {url_address}", fontsize=14, pad=20)
+
+        # Сохраняем PDF
+        pdf_path = os.path.join(PDF_FILES_DIR, f"graph_{final_table}.pdf")
+        plt.tight_layout()
+        plt.savefig(pdf_path, format='pdf', bbox_inches='tight')
+        plt.close()
+
+        pdf_paths.append(pdf_path)
+
+    # Пушим список всех PDF
+    ti.xcom_push(key='pdf_paths', value=pdf_paths)
+    print(f"✅ Сгенерировано {len(pdf_paths)} PDF: {pdf_paths}")
