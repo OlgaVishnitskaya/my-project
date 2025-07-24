@@ -139,3 +139,84 @@ def generate_individual_pdfs(**kwargs):
     # Пушим список всех PDF
     ti.xcom_push(key='pdf_paths', value=pdf_paths)
     print(f"✅ Сгенерировано {len(pdf_paths)} PDF: {pdf_paths}")
+
+
+********************************************************************************************************************
+
+import os
+import logging
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import networkx as nx
+
+def table_dependencies_test(**kwargs):
+    logging.info(kwargs['data_interval_end'])
+    # Подключение к MS SQL Server (пример, замените на ваш код)
+    hook = get_mssql()
+    df_for_update_test = hook.get_pandas_df("""
+        select distinct final_table_nm, child_table_nm, parent_table_nm, url_address 
+        from upd.airflow.v_table_graph_vov
+        where t_changed_dttm >= cast(left('{}', 19) as datetime)
+    """.format(kwargs['data_interval_end'] + timedelta(hours=3)))
+    logging.info('df_for_update_test loaded')
+
+    tables_data = [
+        {
+            'final_table_nm': row['final_table_nm'],
+            'child_table_nm': row['child_table_nm'],
+            'parent_table_nm': row['parent_table_nm'],
+            'url_address': row['url_address']
+        }
+        for _, row in df_for_update_test.iterrows()
+    ]
+    kwargs['ti'].xcom_push(key="tables_data", value=tables_data)
+
+def new(**kwargs):
+    import os
+    import logging
+
+    ti = kwargs['ti']
+    tables_data = ti.xcom_pull(task_ids='table_dependencies_test', key='tables_data')
+    logging.info('tables_data pulled from XCom')
+
+    # Группируем по url_address и final_table_nm
+    grouped_data = defaultdict(list)
+    for data in tables_data:
+        key = (data['final_table_nm'], data['url_address'])
+        grouped_data[key].append(data)
+
+    output_dir = "/path/to/output"  # укажите ваш путь для сохранения PDF
+    os.makedirs(output_dir, exist_ok=True)
+
+    pdf_files = []
+
+    for (final_table_nm, url_address), group in grouped_data.items():
+        logging.info(f'Отрисовка графа для таблицы: {final_table_nm} по адресу: {url_address}')
+
+        # Создаем ориентированный граф с NetworkX
+        G = nx.DiGraph()
+
+        # Добавляем узлы и ребра
+        for data in group:
+            child = data['child_table_nm']
+            parents = data['parent_table_nm']
+            if not isinstance(parents, list):
+                parents = [parents]
+            for parent in parents:
+                G.add_edge(parent, child)
+
+        # Визуализация с помощью matplotlib
+        plt.figure(figsize=(12, 8))
+        pos = nx.spring_layout(G)
+        nx.draw(G, pos, with_labels=True, node_size=2000, node_color='lightblue', arrows=True)
+        plt.title(f'Зависимости для: {final_table_nm}')
+
+        # Сохраняем в PDF
+        filename = f'dep_{final_table_nm}.pdf'
+        pdf_path = os.path.join(output_dir, filename)
+        plt.savefig(pdf_path)
+        plt.close()
+        logging.info(f'Граф сохранен: {pdf_path}')
+        pdf_files.append(pdf_path)
+
+    return pdf_files
