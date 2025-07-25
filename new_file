@@ -390,3 +390,201 @@ send_test_email_task = PythonOperator(
 
 # Установите зависимости
 create_test_graph_task >> send_test_email_task
+
+
+
+************444444444444444444***************************
+
+import os
+import logging
+import matplotlib.pyplot as plt
+import networkx as nx
+from datetime import datetime
+from airflow.utils.email import send_email
+
+def create_sample_graph_test(**kwargs):
+    """Создание графа с тестовыми данными"""
+    import os
+    import logging
+    import matplotlib.pyplot as plt
+    import networkx as nx
+    from datetime import datetime
+    
+    try:
+        # Используем директорию, доступную для записи
+        output_dir = "/tmp/airflow_graphs"
+        
+        # Проверяем и создаем директорию
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+            logging.info(f'Создана директория: {output_dir}')
+        
+        logging.info(f'Текущая рабочая директория: {os.getcwd()}')
+        logging.info(f'Директория для сохранения: {output_dir}')
+        logging.info(f'Права доступа к директории: {oct(os.stat(output_dir).st_mode)[-3:] if os.path.exists(output_dir) else "N/A"}')
+        
+        # Создаем тестовый граф с несколькими узлами
+        G = nx.DiGraph()
+        G.add_edges_from([
+            ('Таблица_A', 'Таблица_B'),
+            ('Таблица_B', 'Таблица_C'),
+            ('Таблица_A', 'Таблица_C')
+        ])
+        
+        # Визуализация
+        plt.figure(figsize=(12, 8))
+        pos = nx.spring_layout(G)
+        nx.draw(G, pos, with_labels=True, node_size=2000, 
+                node_color='lightblue', arrows=True, font_size=10)
+        plt.title('Тестовый граф зависимостей')
+        
+        # Сохраняем в PDF
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'test_sample_graph_{timestamp}.pdf'
+        pdf_path = os.path.join(output_dir, filename)
+        
+        logging.info(f'Попытка сохранить файл: {pdf_path}')
+        
+        # Сохраняем файл
+        plt.savefig(pdf_path, bbox_inches='tight', dpi=150)
+        plt.close()
+        
+        # Проверяем, что файл был создан
+        if os.path.exists(pdf_path):
+            file_size = os.path.getsize(pdf_path)
+            logging.info(f'Тестовый граф успешно сохранен: {pdf_path}, размер: {file_size} байт')
+            
+            # Передаем путь в XCom
+            kwargs['ti'].xcom_push(key='test_graph_path', value=pdf_path)
+            logging.info(f'Путь передан в XCom: {pdf_path}')
+            return pdf_path
+        else:
+            raise Exception(f'Файл не был создан по пути: {pdf_path}')
+            
+    except Exception as e:
+        logging.error(f'Ошибка при создании тестового графа: {str(e)}')
+        logging.error(f'Тип ошибки: {type(e).__name__}')
+        raise
+
+def send_test_email_with_graph(**kwargs):
+    """Отправка тестового email с графом"""
+    ti = kwargs['ti']
+    
+    try:
+        # Получаем путь к файлу из XCom
+        pdf_path = ti.xcom_pull(task_ids='create_test_graph_task', key='test_graph_path')
+        
+        logging.info(f'Получен путь из XCom: {pdf_path}')
+        logging.info(f'Тип полученного значения: {type(pdf_path)}')
+        
+        # Проверяем существование файла
+        files_to_send = []
+        if pdf_path and isinstance(pdf_path, str) and os.path.exists(pdf_path):
+            files_to_send.append(pdf_path)
+            file_size = os.path.getsize(pdf_path)
+            logging.info(f'Файл для отправки найден: {pdf_path}, размер: {file_size} байт')
+            file_info = f"Во вложении файл: {os.path.basename(pdf_path)} (размер: {file_size} байт)"
+        else:
+            if pdf_path:
+                logging.warning(f'Файл не существует по пути: {pdf_path}')
+                logging.warning(f'Абсолютный путь: {os.path.abspath(pdf_path) if pdf_path else "None"}')
+                # Проверяем содержимое директории
+                if pdf_path:
+                    dir_path = os.path.dirname(pdf_path)
+                    if os.path.exists(dir_path):
+                        files_in_dir = os.listdir(dir_path)
+                        logging.warning(f'Файлы в директории {dir_path}: {files_in_dir}')
+            else:
+                logging.warning('Путь к файлу не получен из XCom')
+            file_info = "Вложение не прикреплено (файл не найден)"
+        
+        # Формируем содержимое письма
+        subject = 'Тестовый email с графом зависимостей'
+        html_content = f"""
+        <p>Это тестовое письмо с графом зависимостей.</p>
+        <p>Используется для проверки функциональности отправки email с вложениями.</p>
+        <p><strong>{file_info}</strong></p>
+        <p>Полученный путь: {pdf_path or 'None'}</p>
+        """
+        
+        logging.info(f'Отправка email с {len(files_to_send)} вложениями')
+        
+        # Отправляем email
+        send_email(
+            to=['your-email@example.com'],  # Укажите реальный email
+            subject=subject,
+            html_content=html_content,
+            files=files_to_send
+        )
+        logging.info('Тестовый email отправлен успешно')
+        
+    except Exception as e:
+        logging.error(f'Ошибка при отправке тестового email: {str(e)}')
+        logging.error(f'Тип ошибки: {type(e).__name__}')
+        # Отправляем email с информацией об ошибке
+        try:
+            error_subject = 'ОШИБКА: Тестовый email с графом'
+            error_content = f"""
+            <p>Произошла ошибка при отправке тестового email с графом:</p>
+            <p><strong>Ошибка:</strong> {str(e)}</p>
+            <p><strong>Тип ошибки:</strong> {type(e).__name__}</p>
+            <p>Полученный путь: {pdf_path or 'None'}</p>
+            """
+            send_email(
+                to=['your-email@example.com'],
+                subject=error_subject,
+                html_content=error_content,
+                files=[]
+            )
+        except:
+            pass
+        raise
+
+def test_matplotlib(**kwargs):
+    """Тестовая функция для проверки matplotlib"""
+    import matplotlib
+    import matplotlib.pyplot as plt
+    
+    logging.info(f'Matplotlib backend: {matplotlib.get_backend()}')
+    logging.info(f'Matplotlib version: {matplotlib.__version__}')
+    
+    # Простой тест
+    plt.figure()
+    plt.plot([1, 2, 3], [1, 4, 2])
+    plt.title('Test Plot')
+    
+    # Попытка сохранения в разных форматах
+    test_path = "/tmp/test_plot.png"
+    plt.savefig(test_path)
+    plt.close()
+    
+    if os.path.exists(test_path):
+        logging.info(f'Тестовый график сохранен: {test_path}')
+        return test_path
+    else:
+        raise Exception('Не удалось сохранить тестовый график')
+
+
+def test_matplotlib(**kwargs):
+    """Тестовая функция для проверки matplotlib"""
+    import matplotlib
+    import matplotlib.pyplot as plt
+    
+    logging.info(f'Matplotlib backend: {matplotlib.get_backend()}')
+    logging.info(f'Matplotlib version: {matplotlib.__version__}')
+    
+    # Простой тест
+    plt.figure()
+    plt.plot([1, 2, 3], [1, 4, 2])
+    plt.title('Test Plot')
+    
+    # Попытка сохранения в разных форматах
+    test_path = "/tmp/test_plot.png"
+    plt.savefig(test_path)
+    plt.close()
+    
+    if os.path.exists(test_path):
+        logging.info(f'Тестовый график сохранен: {test_path}')
+        return test_path
+    else:
+        raise Exception('Не удалось сохранить тестовый график')
