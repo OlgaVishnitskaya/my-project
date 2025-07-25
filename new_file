@@ -220,3 +220,67 @@ def new(**kwargs):
         pdf_files.append(pdf_path)
 
     return pdf_files
+
+
+
+*********************882222222222222222222222*************************************************************
+
+def prepare_email_content(**kwargs):
+    """Подготовка контента для EmailOperator"""
+    ti = kwargs['ti']
+    pdf_files_paths = ti.xcom_pull(task_ids='new_task_id', key='pdf_files_paths')
+    
+    # Проверяем существование файлов
+    existing_files = []
+    if pdf_files_paths:
+        for file_path in pdf_files_paths:
+            if os.path.exists(file_path):
+                existing_files.append(file_path)
+    
+    # Сохраняем список файлов для использования в EmailOperator
+    kwargs['ti'].xcom_push(key='email_files', value=existing_files)
+    
+    # Формируем текст письма
+    if existing_files:
+        html_content = f"""
+        <p>Во вложении графы зависимостей таблиц ({len(existing_files)} файлов).</p>
+        <p>Список файлов:</p>
+        <ul>
+        {''.join([f'<li>{os.path.basename(f)}</li>' for f in existing_files])}
+        </ul>
+        """
+    else:
+        html_content = "<p>Нет графов зависимостей для отправки.</p>"
+    
+    kwargs['ti'].xcom_push(key='email_html_content', value=html_content)
+
+from airflow.operators.python import PythonOperator
+from airflow.operators.email import EmailOperator
+
+# В определении DAG:
+table_deps_task = PythonOperator(
+    task_id='table_dependencies_test',
+    python_callable=table_dependencies_test
+)
+
+new_task = PythonOperator(
+    task_id='new_task_id',
+    python_callable=new
+)
+
+prepare_email_task = PythonOperator(
+    task_id='prepare_email_content',
+    python_callable=prepare_email_content
+)
+
+send_email_task = EmailOperator(
+    task_id='send_email_task',
+    to=['recipient@example.com'],  # Укажите реальных получателей
+    subject='Графы зависимостей таблиц',
+    html_content="{{ ti.xcom_pull(task_ids='prepare_email_content', key='email_html_content') }}",
+    files="{{ ti.xcom_pull(task_ids='prepare_email_content', key='email_files') }}",
+    dag=dag
+)
+
+# Установите зависимости
+table_deps_task >> new_task >> prepare_email_task >> send_email_task
