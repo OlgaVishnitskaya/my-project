@@ -284,3 +284,109 @@ send_email_task = EmailOperator(
 
 # Установите зависимости
 table_deps_task >> new_task >> prepare_email_task >> send_email_task
+
+
+
+************333333333333333333333333333333***************************
+import os
+import logging
+import matplotlib.pyplot as plt
+import networkx as nx
+from datetime import datetime
+from airflow.utils.email import send_email
+
+def create_sample_graph_test(**kwargs):
+    """Создание графа с тестовыми данными"""
+    import os
+    import logging
+    import matplotlib.pyplot as plt
+    import networkx as nx
+    
+    # Создаем директорию для сохранения
+    output_dir = "/tmp/airflow_graphs"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Создаем тестовый граф с несколькими узлами
+    G = nx.DiGraph()
+    G.add_edges_from([
+        ('Таблица_A', 'Таблица_B'),
+        ('Таблица_B', 'Таблица_C'),
+        ('Таблица_A', 'Таблица_C')
+    ])
+    
+    # Визуализация
+    plt.figure(figsize=(12, 8))
+    pos = nx.spring_layout(G)
+    nx.draw(G, pos, with_labels=True, node_size=2000, 
+            node_color='lightblue', arrows=True, font_size=10)
+    plt.title('Тестовый граф зависимостей')
+    
+    # Сохраняем в PDF
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'test_sample_graph_{timestamp}.pdf'
+    pdf_path = os.path.join(output_dir, filename)
+    plt.savefig(pdf_path)
+    plt.close()
+    
+    logging.info(f'Тестовый граф с данными сохранен: {pdf_path}')
+    
+    # Передаем путь в XCom
+    kwargs['ti'].xcom_push(key='test_graph_path', value=pdf_path)
+    return pdf_path
+
+def send_test_email_with_graph(**kwargs):
+    """Отправка тестового email с графом"""
+    ti = kwargs['ti']
+    
+    # Получаем путь к файлу из XCom
+    pdf_path = ti.xcom_pull(task_ids='create_test_graph_task', key='test_graph_path')
+    
+    logging.info(f'Получен путь к тестовому графу: {pdf_path}')
+    
+    # Проверяем существование файла
+    files_to_send = []
+    if pdf_path and os.path.exists(pdf_path):
+        files_to_send.append(pdf_path)
+        logging.info(f'Файл для отправки найден: {pdf_path}')
+        file_info = f"Во вложении файл: {os.path.basename(pdf_path)}"
+    else:
+        logging.warning('Тестовый файл не найден, отправляем email без вложения')
+        file_info = "Вложение не прикреплено (файл не найден)"
+    
+    # Формируем содержимое письма
+    subject = 'Тестовый email с графом зависимостей'
+    html_content = f"""
+    <p>Это тестовое письмо с графом зависимостей.</p>
+    <p>Используется для проверки функциональности отправки email с вложениями.</p>
+    <p><strong>{file_info}</strong></p>
+    """
+    
+    # Отправляем email
+    try:
+        send_email(
+            to=['your-email@example.com'],  # Укажите реальный email
+            subject=subject,
+            html_content=html_content,
+            files=files_to_send
+        )
+        logging.info('Тестовый email отправлен успешно')
+    except Exception as e:
+        logging.error(f'Ошибка при отправке тестового email: {str(e)}')
+        raise
+
+
+from airflow.operators.python import PythonOperator
+
+# Тестовые задачи
+create_test_graph_task = PythonOperator(
+    task_id='create_test_graph_task',
+    python_callable=create_sample_graph_test
+)
+
+send_test_email_task = PythonOperator(
+    task_id='send_test_email_task',
+    python_callable=send_test_email_with_graph
+)
+
+# Установите зависимости
+create_test_graph_task >> send_test_email_task
